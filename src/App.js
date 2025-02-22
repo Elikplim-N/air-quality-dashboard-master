@@ -7,7 +7,7 @@ import 'react-date-range/dist/styles.css';
 import 'react-date-range/dist/theme/default.css';
 import "./App.css";
 import TrendChart from "./TrendChart";
-import { supabase, fetchHistoricalData, fetchAggregatedData, fetchNodeHistoricalData } from "./supabaseClient";
+import { supabase, fetchHistoricalData } from "./supabaseClient";
 
 function App() {
   const [tab, setTab] = useState("home");
@@ -24,6 +24,8 @@ function App() {
     }
   ]);
   const [timeView, setTimeView] = useState('daily');
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     fetchData();
@@ -75,21 +77,18 @@ function App() {
     });
   };
 
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-
   async function fetchData() {
     console.log("Fetching data..."); // Log when fetching data
     setIsLoading(true);
     setError(null);
     try {
       const data = await fetchHistoricalData(dateRange[0].startDate, dateRange[0].endDate);
-    console.log("Fetched data:", data); // Log the fetched data
+      console.log("Fetched data:", data); // Log the fetched data
       setData(data);
       processLatestData(data);
       checkDeviceStatus();
     } catch (error) {
-        console.error("Error fetching data:", error); // Log the error
+      console.error("Error fetching data:", error); // Log the error
       setError(error.message);
       console.error("Error fetching data:", error);
     } finally {
@@ -101,9 +100,10 @@ function App() {
     const node1 = data.find((item) => JSON.parse(item.data).node === "Node_1");
     const node2 = data.find((item) => JSON.parse(item.data).node === "Node_2");
 
+    // Use the inserted_at column from the database as the timestamp
     setLatestData({
-      Node_1: node1 ? { ...JSON.parse(node1.data), timestamp: node1.timestamp } : {},
-      Node_2: node2 ? { ...JSON.parse(node2.data), timestamp: node2.timestamp } : {},
+      Node_1: node1 ? { ...JSON.parse(node1.data), timestamp: node1.inserted_at } : {},
+      Node_2: node2 ? { ...JSON.parse(node2.data), timestamp: node2.inserted_at } : {},
     });
   }
 
@@ -259,17 +259,16 @@ function App() {
                 <FaChartLine size={24} />
                 <h2>Historical Data</h2>
               </div>
-            {isLoading ? (
-              <div className="loading-indicator">Loading data...</div>
-            ) : error ? (
-              <div className="error-message">Error: {error}</div>
-            ) : (
-              <TrendChart 
-                data={getFilteredData()} 
-                timeView={timeView}
-              />
-            )}
-
+              {isLoading ? (
+                <div className="loading-indicator">Loading data...</div>
+              ) : error ? (
+                <div className="error-message">Error: {error}</div>
+              ) : (
+                <TrendChart 
+                  data={getFilteredData()} 
+                  timeView={timeView}
+                />
+              )}
             </div>
           </motion.section>
         )}
