@@ -79,14 +79,17 @@ function App() {
   const [error, setError] = useState(null);
 
   async function fetchData() {
+    console.log("Fetching data..."); // Log when fetching data
     setIsLoading(true);
     setError(null);
     try {
       const data = await fetchHistoricalData(dateRange[0].startDate, dateRange[0].endDate);
+    console.log("Fetched data:", data); // Log the fetched data
       setData(data);
       processLatestData(data);
       checkDeviceStatus();
     } catch (error) {
+        console.error("Error fetching data:", error); // Log the error
       setError(error.message);
       console.error("Error fetching data:", error);
     } finally {
