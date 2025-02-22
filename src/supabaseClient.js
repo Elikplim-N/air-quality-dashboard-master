@@ -12,9 +12,9 @@ export const fetchHistoricalData = async (startDate, endDate) => {
     const { data, error } = await supabase
       .from('LoRaData')
       .select('*')
-      .gte('timestamp', startDate.toISOString())
-      .lte('timestamp', endDate.toISOString())
-      .order('timestamp', { ascending: true });
+      .gte('inserted_at', startDate.toISOString())
+      .lte('inserted_at', endDate.toISOString())
+      .order('inserted_at', { ascending: true });
 
     if (error) throw error;
     return data;
@@ -49,9 +49,9 @@ export const fetchNodeHistoricalData = async (node, startDate, endDate) => {
       .from('LoRaData')
       .select('*')
       .contains('data', { node })
-      .gte('timestamp', startDate.toISOString())
-      .lte('timestamp', endDate.toISOString())
-      .order('timestamp', { ascending: true });
+      .gte('inserted_at', startDate.toISOString())
+      .lte('inserted_at', endDate.toISOString())
+      .order('inserted_at', { ascending: true });
 
     if (error) throw error;
     return data;
