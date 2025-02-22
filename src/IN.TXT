@@ -1,0 +1,792 @@
+// TrendChart.js
+import React from "react";
+import { Chart } from "chart.js/auto";
+import { Line } from "react-chartjs-2";
+
+function TrendChart({ data, timeView = 'daily' }) {
+  const processData = () => {
+    if (!data.length) return { labels: [], datasets: [] };
+
+    let processedData = {};
+    
+    const validTimeView = ['daily', 'monthly', 'breakdown'].includes(timeView) 
+      ? timeView 
+      : 'daily';
+    
+    switch(validTimeView) {
+      case 'monthly':
+        processedData = processMonthlyData(data);
+        break;
+      case 'breakdown':
+        processedData = processDayBreakdown(data);
+        break;
+      default:
+        processedData = processDailyData(data);
+    }
+
+    return {
+      labels: processedData.labels,
+      datasets: [
+        {
+          label: "Node 1 Air Quality (%)",
+          data: processedData.node1Data,
+          borderColor: "#007bff",
+          borderWidth: 2,
+          fill: false,
+        },
+        {
+          label: "Node 2 Air Quality (%)",
+          data: processedData.node2Data,
+          borderColor: "#ff5722",
+          borderWidth: 2,
+          fill: false,
+        },
+      ],
+    };
+  };
+
+  const processDailyData = (data) => {
+    const dailyData = {};
+    data.forEach(item => {
+      const date = new Date(item.timestamp).toLocaleDateString();
+      const parsedData = JSON.parse(item.data);
+      
+      if (!dailyData[date]) {
+        dailyData[date] = { node1: [], node2: [] };
+      }
+      
+      if (parsedData.node === "Node_1") {
+        dailyData[date].node1.push(parsedData.airQualityPercentage);
+      } else {
+        dailyData[date].node2.push(parsedData.airQualityPercentage);
+      }
+    });
+
+    return {
+      labels: Object.keys(dailyData),
+      node1Data: Object.values(dailyData).map(d => 
+        d.node1.length ? d.node1.reduce((a, b) => a + b) / d.node1.length : null
+      ),
+      node2Data: Object.values(dailyData).map(d => 
+        d.node2.length ? d.node2.reduce((a, b) => a + b) / d.node2.length : null
+      ),
+    };
+  };
+
+  const processMonthlyData = (data) => {
+    const monthlyData = {};
+    data.forEach(item => {
+      const date = new Date(item.timestamp);
+      const monthYear = `${date.getMonth() + 1}/${date.getFullYear()}`;
+      const parsedData = JSON.parse(item.data);
+      
+      if (!monthlyData[monthYear]) {
+        monthlyData[monthYear] = { node1: [], node2: [] };
+      }
+      
+      if (parsedData.node === "Node_1") {
+        monthlyData[monthYear].node1.push(parsedData.airQualityPercentage);
+      } else {
+        monthlyData[monthYear].node2.push(parsedData.airQualityPercentage);
+      }
+    });
+
+    return {
+      labels: Object.keys(monthlyData),
+      node1Data: Object.values(monthlyData).map(d => 
+        d.node1.length ? d.node1.reduce((a, b) => a + b) / d.node1.length : null
+      ),
+      node2Data: Object.values(monthlyData).map(d => 
+        d.node2.length ? d.node2.reduce((a, b) => a + b) / d.node2.length : null
+      ),
+    };
+  };
+
+  const processDayBreakdown = (data) => {
+    const hourlyData = {};
+    data.forEach(item => {
+      const date = new Date(item.timestamp);
+      const hour = date.getHours();
+      const parsedData = JSON.parse(item.data);
+      
+      if (!hourlyData[hour]) {
+        hourlyData[hour] = { node1: [], node2: [] };
+      }
+      
+      if (parsedData.node === "Node_1") {
+        hourlyData[hour].node1.push(parsedData.airQualityPercentage);
+      } else {
+        hourlyData[hour].node2.push(parsedData.airQualityPercentage);
+      }
+    });
+
+    return {
+      labels: Array.from({ length: 24 }, (_, i) => `${i}:00`),
+      node1Data: Array.from({ length: 24 }, (_, i) => 
+        hourlyData[i]?.node1.length ? 
+        hourlyData[i].node1.reduce((a, b) => a + b) / hourlyData[i].node1.length : 
+        null
+      ),
+      node2Data: Array.from({ length: 24 }, (_, i) => 
+        hourlyData[i]?.node2.length ? 
+        hourlyData[i].node2.reduce((a, b) => a + b) / hourlyData[i].node2.length : 
+        null
+      ),
+    };
+  };
+
+  const chartData = processData();
+  const viewTitle = timeView ? timeView.charAt(0).toUpperCase() + timeView.slice(1) : 'Daily';
+
+  const options = {
+    responsive: true,
+    plugins: {
+      legend: {
+        position: 'top',
+      },
+      title: {
+        display: true,
+        text: `Air Quality Trends (${viewTitle} View)`,
+      },
+    },
+    scales: {
+      y: {
+        beginAtZero: true,
+        max: 100,
+      },
+    },
+  };
+
+  return <Line data={chartData} options={options} />;
+}
+
+export default TrendChart;
+
+import React, { useEffect, useState } from "react";
+import { FaHome, FaChartLine, FaThermometerHalf, FaBatteryThreeQuarters, FaMapMarkerAlt, FaCalendarAlt, FaClock } from "react-icons/fa";
+import { motion } from "framer-motion";
+import { DateRangePicker } from 'react-date-range';
+import { addDays } from 'date-fns';
+import 'react-date-range/dist/styles.css';
+import 'react-date-range/dist/theme/default.css';
+import "./App.css";
+import TrendChart from "./TrendChart";
+import { supabase } from "./supabaseClient";
+
+function App() {
+  const [tab, setTab] = useState("home");
+  const [data, setData] = useState([]);
+  const [latestData, setLatestData] = useState({ Node_1: {}, Node_2: {} });
+  const [deviceStatus, setDeviceStatus] = useState({ Node_1: true, Node_2: true });
+  const [retryCount, setRetryCount] = useState({ Node_1: 0, Node_2: 0 });
+  const [dateRange, setDateRange] = useState([
+    {
+      startDate: addDays(new Date(), -7),
+      endDate: new Date(),
+      key: 'selection',
+      color: '#007bff'
+    }
+  ]);
+  const [timeView, setTimeView] = useState('daily');
+
+  useEffect(() => {
+    fetchData();
+    const subscription = supabase
+      .channel('LoRaData')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'LoRaData' }, fetchData)
+      .subscribe();
+
+    const statusInterval = setInterval(() => {
+      checkDeviceStatus();
+    }, 60000); // Check every minute
+
+    return () => {
+      subscription.unsubscribe();
+      clearInterval(statusInterval);
+    };
+  }, []);
+
+  const checkDeviceStatus = () => {
+    const currentTime = new Date();
+    ["Node_1", "Node_2"].forEach(node => {
+      if (latestData[node].timestamp) {
+        const lastUpdateTime = new Date(latestData[node].timestamp);
+        const timeDiff = (currentTime - lastUpdateTime) / 1000 / 60;
+
+        if (timeDiff > 5) {
+          setRetryCount(prev => ({
+            ...prev,
+            [node]: prev[node] + 1
+          }));
+
+          if (retryCount[node] >= 5) {
+            setDeviceStatus(prev => ({
+              ...prev,
+              [node]: false
+            }));
+          }
+        } else {
+          setRetryCount(prev => ({
+            ...prev,
+            [node]: 0
+          }));
+          setDeviceStatus(prev => ({
+            ...prev,
+            [node]: true
+          }));
+        }
+      }
+    });
+  };
+
+  async function fetchData() {
+    const { data, error } = await supabase.from("LoRaData").select("*").order("timestamp", { ascending: false });
+    if (error) {
+      console.error("Error fetching data:", error);
+    } else {
+      setData(data);
+      processLatestData(data);
+      checkDeviceStatus();
+    }
+  }
+
+  function processLatestData(data) {
+    const node1 = data.find((item) => JSON.parse(item.data).node === "Node_1");
+    const node2 = data.find((item) => JSON.parse(item.data).node === "Node_2");
+
+    setLatestData({
+      Node_1: node1 ? { ...JSON.parse(node1.data), timestamp: node1.timestamp } : {},
+      Node_2: node2 ? { ...JSON.parse(node2.data), timestamp: node2.timestamp } : {},
+    });
+  }
+
+  const getQualityColor = (percentage) => {
+    if (!percentage) return "#F44336";
+    if (percentage >= 80) return "#4CAF50";
+    if (percentage >= 60) return "#FFC107";
+    return "#F44336";
+  };
+
+  const getFilteredData = () => {
+    return data.filter(item => {
+      const itemDate = new Date(item.timestamp);
+      return itemDate >= dateRange[0].startDate && 
+             itemDate <= dateRange[0].endDate;
+    });
+  };
+
+  const statusStyle = (isOnline) => ({
+    display: 'inline-block',
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    backgroundColor: isOnline ? '#4CAF50' : '#F44336',
+    marginRight: '8px',
+    transition: 'background-color 0.3s ease'
+  });
+
+  return (
+    <div className="app">
+      <header className="navbar">
+        <h1>Air Quality Dashboard</h1>
+        <nav className="nav-buttons">
+          <button 
+            className={`nav-button ${tab === "home" ? "active" : ""}`}
+            onClick={() => setTab("home")}
+          >
+            <FaHome /> Home
+          </button>
+          <button 
+            className={`nav-button ${tab === "historical" ? "active" : ""}`}
+            onClick={() => setTab("historical")}
+          >
+            <FaChartLine /> Historical Data
+          </button>
+        </nav>
+      </header>
+
+      <main>
+        {tab === "home" && (
+          <motion.section 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="home-section"
+          >
+            <div className="card-container">
+              {["Node_1", "Node_2"].map((node) => (
+                <motion.div
+                  key={node}
+                  className="dashboard-card"
+                  whileHover={{ scale: 1.02 }}
+                >
+                  <div className="card-header">
+                    <FaThermometerHalf size={24} />
+                    <h3>{node.replace("_", " ")}</h3>
+                    <div 
+                      className="status-indicator" 
+                      style={statusStyle(deviceStatus[node])}
+                      title={deviceStatus[node] ? 'Online' : 'Offline'}
+                    />
+                  </div>
+                  
+                  {latestData[node].node ? (
+                    <>
+                      <div 
+                        className="quality-indicator"
+                        style={{
+                          background: getQualityColor(latestData[node].airQualityPercentage),
+                          width: `${latestData[node].airQualityPercentage}%`
+                        }}
+                      />
+                      <div className="data-row">
+                        <FaThermometerHalf />
+                        <span>Air Quality: {latestData[node].airQuality} ({latestData[node].airQualityPercentage}%)</span>
+                      </div>
+                      <div className="data-row">
+                        <FaBatteryThreeQuarters />
+                        <span>Battery: {latestData[node].batteryPercentage}%</span>
+                      </div>
+                      <div className="data-row">
+                        <FaMapMarkerAlt />
+                        <span>Location: Lat {latestData[node].location.latitude}, Lng {latestData[node].location.longitude}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <p>No data available for {node.replace("_", " ")}</p>
+                  )}
+                </motion.div>
+              ))}
+            </div>
+          </motion.section>
+        )}
+
+        {tab === "historical" && (
+          <motion.section 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="historical-section"
+          >
+            <div className="dashboard-card date-filter-card">
+              <div className="card-header">
+                <FaCalendarAlt size={24} />
+                <h3>Select Date Range</h3>
+              </div>
+              <DateRangePicker
+                onChange={item => setDateRange([item.selection])}
+                moveRangeOnFirstSelection={false}
+                ranges={dateRange}
+                className="date-picker"
+              />
+              <div className="time-view-buttons">
+                <button 
+                  className={`view-button ${timeView === 'daily' ? 'active' : ''}`}
+                  onClick={() => setTimeView('daily')}
+                >
+                  <FaClock /> Daily
+                </button>
+                <button 
+                  className={`view-button ${timeView === 'monthly' ? 'active' : ''}`}
+                  onClick={() => setTimeView('monthly')}
+                >
+                  <FaCalendarAlt /> Monthly
+                </button>
+                <button 
+                  className={`view-button ${timeView === 'breakdown' ? 'active' : ''}`}
+                  onClick={() => setTimeView('breakdown')}
+                >
+                  <FaChartLine /> Day Breakdown
+                </button>
+              </div>
+            </div>
+
+            <div className="dashboard-card">
+              <div className="card-header">
+                <FaChartLine size={24} />
+                <h2>Historical Data</h2>
+              </div>
+              <TrendChart 
+                data={getFilteredData()} 
+                timeView={timeView}
+              />
+            </div>
+          </motion.section>
+        )}
+      </main>
+
+      <footer>
+        <p>&copy; 2024 Air Quality Monitoring System</p>
+      </footer>
+    </div>
+  );
+}
+
+export default App;
+
+.app {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+}
+
+.navbar {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  padding: 1rem 2rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.status-indicator {
+  position: relative;
+  cursor: help;
+}
+
+.status-indicator:hover::after {
+  content: attr(title);
+  position: absolute;
+  top: -25px;
+  right: 0;
+  background: rgba(0,0,0,0.8);
+  color: white;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+  z-index: 1;
+}
+.navbar h1 {
+  color: #2c3e50;
+  font-size: 1.8rem;
+  margin: 0;
+}
+
+.nav-buttons {
+  display: flex;
+  gap: 1rem;
+}
+
+.nav-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #2c3e50;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-size: 1rem;
+}
+
+.nav-button:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.nav-button.active {
+  background: #007bff;
+  color: white;
+}
+
+.card-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 2rem;
+  padding: 2rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.dashboard-card {
+  background: rgba(255, 255, 255, 0.9);
+  border-radius: 15px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  transition: transform 0.3s ease;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  color: #2c3e50;
+}
+
+.card-header h3 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.data-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.8rem 0;
+  color: #505c6e;
+  font-size: 1.1rem;
+}
+
+.quality-indicator {
+  height: 8px;
+  border-radius: 4px;
+  margin: 1rem 0;
+  background: #e0e0e0;
+  transition: all 0.3s ease;
+}
+
+.historical-section {
+  padding: 2rem;
+}
+
+footer {
+  text-align: center;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.9);
+  color: #2c3e50;
+  margin-top: auto;
+}
+
+@media (max-width: 768px) {
+  .navbar {
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .card-container {
+    padding: 1rem;
+  }
+
+  .dashboard-card {
+    margin: 0.5rem;
+  }
+}
+.date-filter-card {
+  margin-bottom: 2rem;
+}
+
+.time-view-buttons {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+  justify-content: center;
+}
+
+.view-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #007bff;
+  border-radius: 8px;
+  background: transparent;
+  color: #007bff;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.view-button:hover {
+  background: rgba(0, 123, 255, 0.1);
+}
+
+.view-button.active {
+  background: #007bff;
+  color: white;
+}
+
+.date-picker {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+@media (max-width: 768px) {
+  .time-view-buttons {
+    flex-direction: column;
+  }
+  
+  .date-picker {
+    max-width: 100%;
+  }
+}/* Base styles */
+.app {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
+
+/* Navbar responsiveness */
+.navbar {
+  padding: 1rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .navbar {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .nav-buttons {
+    width: 100%;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .nav-button {
+    padding: 0.5rem;
+    font-size: 0.9rem;
+  }
+}
+
+/* Card container responsiveness */
+.card-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  padding: 1rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* Dashboard card responsiveness */
+.dashboard-card {
+  min-width: 280px;
+  margin: 0.5rem;
+}
+
+@media (max-width: 480px) {
+  .dashboard-card {
+    min-width: unset;
+    margin: 0.25rem;
+  }
+
+  .card-header h3 {
+    font-size: 1.1rem;
+  }
+
+  .data-row {
+    font-size: 0.9rem;
+  }
+}
+
+/* Date picker responsiveness */
+.date-filter-card {
+  overflow: hidden;
+}
+
+.date-picker {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@media (max-width: 768px) {
+  .time-view-buttons {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .view-button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* Historical section responsiveness */
+.historical-section {
+  padding: 1rem;
+}
+
+@media (max-width: 480px) {
+  .historical-section .card-header h2 {
+    font-size: 1.2rem;
+  }
+}
+
+/* Chart responsiveness */
+.dashboard-card canvas {
+  max-height: 400px;
+  width: 100% !important;
+}
+
+/* Status indicator responsiveness */
+@media (max-width: 480px) {
+  .status-indicator:hover::after {
+    font-size: 10px;
+    padding: 2px 4px;
+    top: -20px;
+  }
+}
+
+/* Quality indicator responsiveness */
+.quality-indicator {
+  height: 6px;
+}
+
+@media (max-width: 480px) {
+  .quality-indicator {
+    height: 4px;
+  }
+}
+
+/* Footer responsiveness */
+footer {
+  padding: 1rem;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 480px) {
+  footer {
+    font-size: 0.8rem;
+  }
+}
+
+{
+  "name": "air-quality-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "^2.47.0",
+    "chart.js": "^4.4.0",
+    "cra-template": "1.2.0",
+    "date-fns": "2.30.0",
+    "framer-motion": "^10.16.0",
+    "react": "^18.2.0",
+    "react-chartjs-2": "^5.2.0",
+    "react-date-range": "1.4.0",
+    "react-dom": "^18.2.0",
+    "react-icons": "^4.10.0",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
