@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { FaHome, FaChartLine, FaThermometerHalf, FaBatteryThreeQuarters, FaMapMarkerAlt, FaCalendarAlt, FaClock } from "react-icons/fa";
+import {
+  FaHome,
+  FaChartLine,
+  FaThermometerHalf,
+  FaBatteryThreeQuarters,
+  FaMapMarkerAlt,
+  FaCalendarAlt,
+  FaClock
+} from "react-icons/fa";
 import { motion } from "framer-motion";
 import { DateRangePicker } from "react-date-range";
 import { addDays } from "date-fns";
@@ -12,7 +20,6 @@ import { supabase, fetchHistoricalData } from "./supabaseClient";
 function App() {
   const [tab, setTab] = useState("home");
   const [data, setData] = useState([]);
-  const [filteredData, setFilteredData] = useState([]); // new state for historical data
   const [latestData, setLatestData] = useState({ Node_1: {}, Node_2: {} });
   const [deviceStatus, setDeviceStatus] = useState({ Node_1: true, Node_2: true });
   const [retryCount, setRetryCount] = useState({ Node_1: 0, Node_2: 0 });
@@ -28,24 +35,6 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // Fetch new filtered data when date range changes
-  useEffect(() => {
-    async function loadFilteredData() {
-      try {
-        setIsLoading(true);
-        const data = await fetchHistoricalData(dateRange[0].startDate, dateRange[0].endDate);
-        setFilteredData(data);
-      } catch (error) {
-        setError(error.message);
-        console.error("Error fetching filtered data:", error);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadFilteredData();
-  }, [dateRange]);
-
-  // Fetch data for latest updates and device status
   useEffect(() => {
     fetchData();
     const subscription = supabase
@@ -68,47 +57,32 @@ function App() {
     ["Node_1", "Node_2"].forEach((node) => {
       if (latestData[node].timestamp) {
         const lastUpdateTime = new Date(latestData[node].timestamp);
-        const timeDiff = (currentTime - lastUpdateTime) / 1000 / 60;
+        const timeDiff = (currentTime - lastUpdateTime) / 1000 / 60; // in minutes
 
-        if (timeDiff > 5) {
-          setRetryCount((prev) => ({
-            ...prev,
-            [node]: prev[node] + 1
-          }));
-
-          if (retryCount[node] >= 5) {
-            setDeviceStatus((prev) => ({
-              ...prev,
-              [node]: false
-            }));
-          }
+        // Mark offline if last update was more than 10 minutes ago
+        if (timeDiff > 10) {
+          setDeviceStatus((prev) => ({ ...prev, [node]: false }));
         } else {
-          setRetryCount((prev) => ({
-            ...prev,
-            [node]: 0
-          }));
-          setDeviceStatus((prev) => ({
-            ...prev,
-            [node]: true
-          }));
+          setDeviceStatus((prev) => ({ ...prev, [node]: true }));
         }
+      } else {
+        // No data available; mark as offline
+        setDeviceStatus((prev) => ({ ...prev, [node]: false }));
       }
     });
   };
 
   async function fetchData() {
-    console.log("Fetching data..."); // Log when fetching data
     setIsLoading(true);
     setError(null);
     try {
       const data = await fetchHistoricalData(dateRange[0].startDate, dateRange[0].endDate);
-      console.log("Fetched data:", data); // Log the fetched data
       setData(data);
       processLatestData(data);
       checkDeviceStatus();
     } catch (error) {
-      console.error("Error fetching data:", error); // Log the error
       setError(error.message);
+      console.error("Error fetching data:", error);
     } finally {
       setIsLoading(false);
     }
@@ -118,10 +92,9 @@ function App() {
     const node1 = data.find((item) => JSON.parse(item.data).node === "Node_1");
     const node2 = data.find((item) => JSON.parse(item.data).node === "Node_2");
 
-    // Convert inserted_at to Date object and assign to timestamp property
     setLatestData({
-      Node_1: node1 ? { ...JSON.parse(node1.data), timestamp: new Date(node1.inserted_at) } : {},
-      Node_2: node2 ? { ...JSON.parse(node2.data), timestamp: new Date(node2.inserted_at) } : {}
+      Node_1: node1 ? { ...JSON.parse(node1.data), timestamp: node1.timestamp } : {},
+      Node_2: node2 ? { ...JSON.parse(node2.data), timestamp: node2.timestamp } : {}
     });
   }
 
@@ -171,14 +144,8 @@ function App() {
                   <div className="card-header">
                     <FaThermometerHalf size={24} />
                     <h3>{node.replace("_", " ")}</h3>
-                    <div className="status-indicator" style={statusStyle(deviceStatus[node])} title={deviceStatus[node] ? "Online" : "Offline"} />
-                    {latestData[node].timestamp && (
-                      <div className="timestamp">
-                        Last update: {new Date(latestData[node].timestamp).toLocaleTimeString()}
-                      </div>
-                    )}
+                    <div style={statusStyle(deviceStatus[node])} title={deviceStatus[node] ? "Online" : "Offline"} />
                   </div>
-
                   {latestData[node].node ? (
                     <>
                       <div
@@ -202,6 +169,13 @@ function App() {
                         <FaMapMarkerAlt />
                         <span>
                           Location: Lat {latestData[node].location?.latitude}, Lng {latestData[node].location?.longitude}
+                        </span>
+                      </div>
+                      <div className="data-row">
+                        <FaClock />
+                        <span>
+                          Data Timestamp:{" "}
+                          {new Date(latestData[node].timestamp).toLocaleString()}
                         </span>
                       </div>
                     </>
@@ -228,13 +202,22 @@ function App() {
                 className="date-picker"
               />
               <div className="time-view-buttons">
-                <button className={`view-button ${timeView === "daily" ? "active" : ""}`} onClick={() => setTimeView("daily")}>
+                <button
+                  className={`view-button ${timeView === "daily" ? "active" : ""}`}
+                  onClick={() => setTimeView("daily")}
+                >
                   <FaClock /> Daily
                 </button>
-                <button className={`view-button ${timeView === "monthly" ? "active" : ""}`} onClick={() => setTimeView("monthly")}>
+                <button
+                  className={`view-button ${timeView === "monthly" ? "active" : ""}`}
+                  onClick={() => setTimeView("monthly")}
+                >
                   <FaCalendarAlt /> Monthly
                 </button>
-                <button className={`view-button ${timeView === "breakdown" ? "active" : ""}`} onClick={() => setTimeView("breakdown")}>
+                <button
+                  className={`view-button ${timeView === "breakdown" ? "active" : ""}`}
+                  onClick={() => setTimeView("breakdown")}
+                >
                   <FaChartLine /> Day Breakdown
                 </button>
               </div>
@@ -250,7 +233,7 @@ function App() {
               ) : error ? (
                 <div className="error-message">Error: {error}</div>
               ) : (
-                <TrendChart data={filteredData} timeView={timeView} />
+                <TrendChart data={data} timeView={timeView} />
               )}
             </div>
           </motion.section>
