@@ -1,189 +1,282 @@
-// src/App.jsx
-import React, { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
+import React, { useEffect, useState } from "react";
+import {
+  FaHome,
+  FaChartLine,
+  FaThermometerHalf,
+  FaBatteryThreeQuarters,
+  FaMapMarkerAlt,
+  FaCalendarAlt,
+  FaClock
+} from "react-icons/fa";
+import { motion } from "framer-motion";
+import { DateRangePicker } from "react-date-range";
+import { addDays } from "date-fns";
+import "react-date-range/dist/styles.css";
+import "react-date-range/dist/theme/default.css";
+import "./App.css";
+import TrendChart from "./TrendChart";
+import { supabase, fetchHistoricalData } from "./supabaseClient";
 
-// ====== Supabase ======
-const supabaseUrl = "https://piiukbcyvbrlkjvptspv.supabase.co";
-const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBpaXVrYmN5dmJybGtqdnB0c3B2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU2Mjg2NzksImV4cCI6MjA3MTIwNDY3OX0.J376VTOIhP6JBEUtvepzF8g-QXnzZGmyeum0jffkpSs";
-const supabase = createClient(supabaseUrl, supabaseKey);
+// ===== Config =====
+const OFFLINE_MINUTES = 5; // device considered offline if no data within 5 minutes
+const NODES = ["Node_1", "Node_2"];
 
-// ====== Config ======
-const TABLE = "LoRaData";
-const POLL_MS = 30_000;          // refresh list every 30s
-const STATUS_TICK_MS = 10_000;   // recompute online/offline every 10s
-const OFFLINE_MINUTES = 5;       // <= 5 min = online, otherwise offline
-const NODES = ["Node_1", "Node_2"]; // add more names here if you have them
-
-export default function App() {
-  const [rows, setRows] = useState([]);                 // raw DB rows
-  const [latestData, setLatestData] = useState({});     // per-node latest payload
-  const [deviceStatus, setDeviceStatus] = useState({}); // per-node boolean
-
-  // ---------- fetch most recent data ----------
-  const fetchData = async () => {
-    const { data, error } = await supabase
-      .from(TABLE)
-      .select("id,data,inserted_at")
-      .order("inserted_at", { ascending: false }) // newest first
-      .limit(1000);
-
-    if (error) {
-      console.error("Fetch error:", error);
-      return;
+function App() {
+  const [tab, setTab] = useState("home");
+  const [data, setData] = useState([]);
+  const [latestData, setLatestData] = useState({ Node_1: {}, Node_2: {} });
+  const [deviceStatus, setDeviceStatus] = useState({ Node_1: false, Node_2: false });
+  const [retryCount, setRetryCount] = useState({ Node_1: 0, Node_2: 0 });
+  const [dateRange, setDateRange] = useState([
+    {
+      startDate: addDays(new Date(), -7),
+      endDate: new Date(),
+      key: "selection",
+      color: "#007bff"
     }
-    setRows(data || []);
-    processLatestData(data || []);
-  };
+  ]);
+  const [timeView, setTimeView] = useState("daily");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  // ---------- compute latest payload per node ----------
-  function processLatestData(dbRows) {
-    // parse once, keep inserted_at alongside payload fields
-    const parsed = dbRows.map((r) => {
-      let payload = {};
-      try {
-        payload = JSON.parse(r.data || "{}");
-      } catch (e) {
-        console.warn("Bad JSON in row", r.id, e);
-      }
-      return { ...payload, inserted_at: r.inserted_at };
-    });
+  // ---- fetch + realtime subscription ----
+  useEffect(() => {
+    fetchData();
+    const subscription = supabase
+      .channel("LoRaData")
+      .on("postgres_changes", { event: "*", schema: "public", table: "LoRaData" }, fetchData)
+      .subscribe();
 
-    const latestFor = (nodeName) =>
-      parsed.find((p) => p.node === nodeName) || {}; // rows are already newest-first
+    const statusInterval = setInterval(() => {
+      checkDeviceStatus();
+    }, 10_000); // recompute every 10s
 
-    const next = {};
-    NODES.forEach((n) => (next[n] = latestFor(n)));
-    setLatestData(next);
-  }
+    return () => {
+      subscription.unsubscribe();
+      clearInterval(statusInterval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ---------- online/offline based on inserted_at ----------
+  // ---- compute device status from latestData ----
   const checkDeviceStatus = () => {
-    const now = Date.now();
+    const nowMs = Date.now();
     const next = {};
     NODES.forEach((node) => {
       const ts = latestData[node]?.inserted_at;
       if (ts) {
-        const diffMin = (now - new Date(ts).getTime()) / 60000;
+        const diffMin = (nowMs - new Date(ts).getTime()) / 60000;
         next[node] = diffMin <= OFFLINE_MINUTES;
       } else {
-        next[node] = false; // no data yet -> treat as offline
+        next[node] = false; // no data yet
       }
     });
     setDeviceStatus((prev) => ({ ...prev, ...next }));
   };
 
-  // ---------- effects ----------
-  useEffect(() => {
-    fetchData(); // initial load
-    const poll = setInterval(fetchData, POLL_MS);
-    return () => clearInterval(poll);
-  }, []);
+  async function fetchData() {
+    setIsLoading(true);
+    setError(null);
+    try {
+      // Ensure fetchHistoricalData returns rows with fields: { data: string, inserted_at: ISO, id?: number }
+      const rows = await fetchHistoricalData(dateRange[0].startDate, dateRange[0].endDate);
+      setData(rows);
+      processLatestData(rows);
+      checkDeviceStatus();
+    } catch (err) {
+      setError(err?.message || String(err));
+      console.error("Error fetching data:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  }
 
-  useEffect(() => {
-    // recompute status whenever latestData changes and also on a timer
-    checkDeviceStatus();
-    const tick = setInterval(checkDeviceStatus, STATUS_TICK_MS);
-    return () => clearInterval(tick);
-  }, [latestData]);
+  // ---- pick latest row per node by inserted_at ----
+  function processLatestData(rows) {
+    // Parse once and keep inserted_at in the object
+    const parsed = rows.map((r) => {
+      let payload = {};
+      try {
+        payload = JSON.parse(r.data || "{}");
+      } catch (e) {
+        console.warn("Bad JSON row", r?.id, e);
+      }
+      return { ...payload, inserted_at: r.inserted_at };
+    });
 
-  // ---------- helpers ----------
-  const fmtTime = (iso) =>
-    iso ? new Date(iso).toLocaleString() : "—";
+    // Sort newest first to make "find" return the latest
+    parsed.sort((a, b) => new Date(b.inserted_at) - new Date(a.inserted_at));
 
-  const NodeCard = ({ node }) => {
-    const d = latestData[node] || {};
-    const online = !!deviceStatus[node];
+    const latestFor = (nodeName) => parsed.find((p) => p.node === nodeName) || {};
 
-    // You can adapt these field names to your payload keys
-    const {
-      batteryPercentage,
-      battery,             // if you use raw voltage instead
-      temperature,
-      humidity,
-      rssi,
-    } = d;
+    setLatestData({
+      Node_1: latestFor("Node_1"),
+      Node_2: latestFor("Node_2")
+    });
+  }
 
-    return (
-      <div
-        className="card"
-        style={{
-          padding: 16,
-          borderRadius: 12,
-          background: "#111",
-          color: "#eee",
-          border: `1px solid ${online ? "#1db954" : "#f44336"}`,
-          boxShadow: "0 8px 24px rgba(0,0,0,.3)",
-          maxWidth: 420,
-          width: "100%",
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div
-            style={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              background: online ? "#1db954" : "#f44336",
-            }}
-          />
-          <h3 style={{ margin: 0 }}>{node}</h3>
-          <span style={{ opacity: 0.7, marginLeft: 8 }}>
-            {online ? "Online" : "Offline"}
-          </span>
-        </div>
-
-        <div style={{ marginTop: 12, fontSize: 14, opacity: 0.85 }}>
-          <div><strong>Last packet:</strong> {fmtTime(d.inserted_at)}</div>
-          {batteryPercentage != null && (
-            <div><strong>Battery %:</strong> {batteryPercentage}%</div>
-          )}
-          {battery != null && (
-            <div><strong>Battery (V):</strong> {battery}</div>
-          )}
-          {temperature != null && (
-            <div><strong>Temp:</strong> {temperature}°C</div>
-          )}
-          {humidity != null && (
-            <div><strong>Humidity:</strong> {humidity}%</div>
-          )}
-          {rssi != null && (
-            <div><strong>RSSI:</strong> {rssi} dBm</div>
-          )}
-        </div>
-      </div>
-    );
+  const getQualityColor = (percentage) => {
+    if (percentage == null) return "#F44336";
+    if (percentage >= 80) return "#4CAF50";
+    if (percentage >= 60) return "#FFC107";
+    return "#F44336";
   };
 
+  const statusStyle = (isOnline) => ({
+    display: "inline-block",
+    width: "10px",
+    height: "10px",
+    borderRadius: "50%",
+    backgroundColor: isOnline ? "#4CAF50" : "#F44336",
+    marginRight: "8px",
+    transition: "background-color 0.3s ease"
+  });
+
   return (
-    <div
-      style={{
-        minHeight: "100dvh",
-        background: "#0b0b0c",
-        padding: "32px 20px",
-        color: "#fff",
-        fontFamily:
-          'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial',
-      }}
-    >
-      <header style={{ marginBottom: 20 }}>
-        <h1 style={{ margin: 0, fontSize: 28 }}>Air Quality Dashboard</h1>
-        <div style={{ opacity: 0.7, fontSize: 14 }}>
-          Table: <code style={{ color: "#9cdcfe" }}>{TABLE}</code> · Offline threshold:{" "}
-          {OFFLINE_MINUTES} min
-        </div>
+    <div className="app">
+      <header className="navbar">
+        <h1>Air Quality Dashboard</h1>
+        <nav className="nav-buttons">
+          <button
+            className={`nav-button ${tab === "home" ? "active" : ""}`}
+            onClick={() => setTab("home")}
+          >
+            <FaHome /> Home
+          </button>
+          <button
+            className={`nav-button ${tab === "historical" ? "active" : ""}`}
+            onClick={() => setTab("historical")}
+          >
+            <FaChartLine /> Historical Data
+          </button>
+        </nav>
       </header>
 
-      <section
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          gap: 16,
-        }}
-      >
-        {NODES.map((n) => (
-          <NodeCard node={n} key={n} />
-        ))}
-      </section>
+      <main>
+        {tab === "home" && (
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="home-section"
+          >
+            <div className="card-container">
+              {NODES.map((node) => (
+                <motion.div key={node} className="dashboard-card" whileHover={{ scale: 1.02 }}>
+                  <div className="card-header">
+                    <FaThermometerHalf size={24} />
+                    <h3>{node.replace("_", " ")}</h3>
+                    <div
+                      style={statusStyle(deviceStatus[node])}
+                      title={deviceStatus[node] ? "Online" : "Offline"}
+                    />
+                  </div>
+
+                  {latestData[node]?.node ? (
+                    <>
+                      <div
+                        className="quality-indicator"
+                        style={{
+                          background: getQualityColor(latestData[node].airQualityPercentage),
+                          width: `${latestData[node].airQualityPercentage}%`
+                        }}
+                      />
+                      <div className="data-row">
+                        <FaThermometerHalf />
+                        <span>
+                          Air Quality: {latestData[node].airQuality} (
+                          {latestData[node].airQualityPercentage}%)
+                        </span>
+                      </div>
+
+                      <div className="data-row">
+                        <FaBatteryThreeQuarters />
+                        <span>Battery: {latestData[node].batteryPercentage}%</span>
+                      </div>
+
+                      <div className="data-row">
+                        <FaMapMarkerAlt />
+                        <span>
+                          Location: Lat {latestData[node].location?.latitude}, Lng{" "}
+                          {latestData[node].location?.longitude}
+                        </span>
+                      </div>
+
+                      <div className="data-row">
+                        <FaClock />
+                        <span>
+                          Data Timestamp:{" "}
+                          {latestData[node].inserted_at
+                            ? new Date(latestData[node].inserted_at).toLocaleString()
+                            : "—"}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <p>No data available for {node.replace("_", " ")}</p>
+                  )}
+                </motion.div>
+              ))}
+            </div>
+          </motion.section>
+        )}
+
+        {tab === "historical" && (
+          <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="historical-section">
+            <div className="dashboard-card date-filter-card">
+              <div className="card-header">
+                <FaCalendarAlt size={24} />
+                <h3>Select Date Range</h3>
+              </div>
+              <DateRangePicker
+                onChange={(item) => setDateRange([item.selection])}
+                moveRangeOnFirstSelection={false}
+                ranges={dateRange}
+                className="date-picker"
+              />
+              <div className="time-view-buttons">
+                <button
+                  className={`view-button ${timeView === "daily" ? "active" : ""}`}
+                  onClick={() => setTimeView("daily")}
+                >
+                  <FaClock /> Daily
+                </button>
+                <button
+                  className={`view-button ${timeView === "monthly" ? "active" : ""}`}
+                  onClick={() => setTimeView("monthly")}
+                >
+                  <FaCalendarAlt /> Monthly
+                </button>
+                <button
+                  className={`view-button ${timeView === "breakdown" ? "active" : ""}`}
+                  onClick={() => setTimeView("breakdown")}
+                >
+                  <FaChartLine /> Day Breakdown
+                </button>
+              </div>
+            </div>
+
+            <div className="dashboard-card">
+              <div className="card-header">
+                <FaChartLine size={24} />
+                <h2>Historical Data</h2>
+              </div>
+              {isLoading ? (
+                <div className="loading-indicator">Loading data...</div>
+              ) : error ? (
+                <div className="error-message">Error: {error}</div>
+              ) : (
+                <TrendChart data={data} timeView={timeView} />
+              )}
+            </div>
+          </motion.section>
+        )}
+      </main>
+
+      <footer>
+        <p>&copy; 2024 Air Quality Monitoring System</p>
+      </footer>
     </div>
   );
 }
+
+export default App;
