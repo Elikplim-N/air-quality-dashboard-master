@@ -60,25 +60,25 @@ function App() {
 
   // ---- compute device status from latestData ----
   const checkDeviceStatus = () => {
-    const nowMs = Date.now();
+    const now = Date.now();
     const next = {};
     NODES.forEach((node) => {
       const ts = latestData[node]?.inserted_at;
       if (ts) {
-        const diffMin = (nowMs - new Date(ts).getTime()) / 60000;
+        const diffMin = (now - new Date(ts).getTime()) / 60000;
         next[node] = diffMin <= OFFLINE_MINUTES;
       } else {
         next[node] = false; // no data yet
       }
     });
-    setDeviceStatus((prev) => ({ ...prev, ...next }));
+    setDeviceStatus(next);
   };
 
   async function fetchData() {
     setIsLoading(true);
     setError(null);
     try {
-      // Ensure fetchHistoricalData returns rows with fields: { data: string, inserted_at: ISO, id?: number }
+      // fetchHistoricalData must SELECT id, data, inserted_at
       const rows = await fetchHistoricalData(dateRange[0].startDate, dateRange[0].endDate);
       setData(rows);
       processLatestData(rows);
