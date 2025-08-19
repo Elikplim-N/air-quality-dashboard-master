@@ -18,7 +18,7 @@ import TrendChart from "./TrendChart";
 import { supabase, fetchHistoricalData } from "./supabaseClient";
 
 // ===== Config =====
-const OFFLINE_MINUTES = 5; // device considered offline if no data within 5 minutes
+const OFFLINE_MINUTES = 2; // device considered offline if no data within 5 minutes
 const NODES = ["Node_1", "Node_2"];
 
 function App() {
@@ -66,7 +66,7 @@ function App() {
       const ts = latestData[node]?.inserted_at;
       if (ts) {
         const diffMin = (now - new Date(ts).getTime()) / 60000;
-        next[node] = diffMin <= OFFLINE_MINUTES;
+        next[node] = diffMin <= _MINUTES;
       } else {
         next[node] = false; // no data yet
       }
