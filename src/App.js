@@ -17,16 +17,13 @@ import "./App.css";
 import TrendChart from "./TrendChart";
 import { supabase, fetchHistoricalData } from "./supabaseClient";
 
-// ===== Config =====
-const OFFLINE_MINUTES = 2; // device considered offline if no data within 5 minutes
+// Nodes you want to display
 const NODES = ["Node_1", "Node_2"];
 
 function App() {
   const [tab, setTab] = useState("home");
   const [data, setData] = useState([]);
   const [latestData, setLatestData] = useState({ Node_1: {}, Node_2: {} });
-  const [deviceStatus, setDeviceStatus] = useState({ Node_1: false, Node_2: false });
-  const [retryCount, setRetryCount] = useState({ Node_1: 0, Node_2: 0 });
   const [dateRange, setDateRange] = useState([
     {
       startDate: addDays(new Date(), -7),
@@ -42,37 +39,17 @@ function App() {
   // ---- fetch + realtime subscription ----
   useEffect(() => {
     fetchData();
+
     const subscription = supabase
       .channel("LoRaData")
       .on("postgres_changes", { event: "*", schema: "public", table: "LoRaData" }, fetchData)
       .subscribe();
 
-    const statusInterval = setInterval(() => {
-      checkDeviceStatus();
-    }, 10_000); // recompute every 10s
-
     return () => {
       subscription.unsubscribe();
-      clearInterval(statusInterval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // ---- compute device status from latestData ----
-  const checkDeviceStatus = () => {
-  const now = Date.now();
-  const next = {};
-  NODES.forEach((node) => {
-    const ts = latestData[node]?.inserted_at;
-    if (ts) {
-      const diffMin = (now - new Date(ts).getTime()) / 60000;
-      next[node] = diffMin <= OFFLINE_MINUTES;
-    } else {
-      next[node] = false;
-    }
-  });
-  setDeviceStatus(next);
-};
 
   async function fetchData() {
     setIsLoading(true);
@@ -82,7 +59,6 @@ function App() {
       const rows = await fetchHistoricalData(dateRange[0].startDate, dateRange[0].endDate);
       setData(rows);
       processLatestData(rows);
-      checkDeviceStatus();
     } catch (err) {
       setError(err?.message || String(err));
       console.error("Error fetching data:", err);
@@ -122,16 +98,6 @@ function App() {
     return "#F44336";
   };
 
-  const statusStyle = (isOnline) => ({
-    display: "inline-block",
-    width: "10px",
-    height: "10px",
-    borderRadius: "50%",
-    backgroundColor: isOnline ? "#4CAF50" : "#F44336",
-    marginRight: "8px",
-    transition: "background-color 0.3s ease"
-  });
-
   return (
     <div className="app">
       <header className="navbar">
@@ -165,10 +131,6 @@ function App() {
                   <div className="card-header">
                     <FaThermometerHalf size={24} />
                     <h3>{node.replace("_", " ")}</h3>
-                    <div
-                      style={statusStyle(deviceStatus[node])}
-                      title={deviceStatus[node] ? "Online" : "Offline"}
-                    />
                   </div>
 
                   {latestData[node]?.node ? (
@@ -204,7 +166,7 @@ function App() {
                       <div className="data-row">
                         <FaClock />
                         <span>
-                          Data Timestamp:{" "}
+                          Last Updated:{" "}
                           {latestData[node].inserted_at
                             ? new Date(latestData[node].inserted_at).toLocaleString()
                             : "—"}
