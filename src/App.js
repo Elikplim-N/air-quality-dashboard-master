@@ -1,55 +1,41 @@
 import React, { useEffect, useState } from "react";
-import {
-  FaHome,
-  FaChartLine,
-  FaThermometerHalf,
-  FaBatteryThreeQuarters,
-  FaMapMarkerAlt,
-  FaCalendarAlt,
-  FaClock
-} from "react-icons/fa";
+import { FaHome, FaChartLine, FaThermometerHalf, FaBatteryThreeQuarters, FaMapMarkerAlt, FaCalendarAlt, FaClock, FaChartBar } from "react-icons/fa";
 import { motion } from "framer-motion";
-import { DateRangePicker } from "react-date-range";
-import { addDays } from "date-fns";
-import "react-date-range/dist/styles.css";
-import "react-date-range/dist/theme/default.css";
+import { DateRangePicker } from 'react-date-range';
+import { addDays } from 'date-fns';
+import 'react-date-range/dist/styles.css';
+import 'react-date-range/dist/theme/default.css';
 import "./App.css";
 import TrendChart from "./TrendChart";
-import { supabase, fetchHistoricalData } from "./supabaseClient";
+import { supabase } from "./supabaseClient";
+import Analytics from "./components/Analytics";
 
-// Nodes you want to display
 const NODES = ["Node_1", "Node_2"];
 
 function App() {
   const [tab, setTab] = useState("home");
   const [data, setData] = useState([]);
   const [latestData, setLatestData] = useState({ Node_1: {}, Node_2: {} });
+  const [deviceStatus, setDeviceStatus] = useState({ Node_1: true, Node_2: true });
+  const [retryCount, setRetryCount] = useState({ Node_1: 0, Node_2: 0 });
   const [dateRange, setDateRange] = useState([
     {
-      startDate: addDays(new Date(), -7),
+      startDate: addDays(new Date(), -6),
       endDate: new Date(),
-      key: "selection",
-      color: "#007bff"
+      key: 'selection'
     }
   ]);
   const [timeView, setTimeView] = useState("daily");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  // ---- fetch + realtime subscription ----
   useEffect(() => {
     fetchData();
-
-    const subscription = supabase
-      .channel("LoRaData")
-      .on("postgres_changes", { event: "*", schema: "public", table: "LoRaData" }, fetchData)
-      .subscribe();
-
-    return () => {
-      subscription.unsubscribe();
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // Optionally, set up periodic refresh
+    // const interval = setInterval(fetchData, 60000);
+    // return () => clearInterval(interval);
+    // eslint-disable-next-line
+  }, [dateRange]);
 
   async function fetchData() {
     setIsLoading(true);
@@ -98,22 +84,46 @@ function App() {
     return "#F44336";
   };
 
+  const getFilteredData = () => {
+    return data.filter(item => {
+      const itemDate = new Date(item.timestamp || item.inserted_at);
+      return itemDate >= dateRange[0].startDate && 
+             itemDate <= dateRange[0].endDate;
+    });
+  };
+
+  const statusStyle = (isOnline) => ({
+    display: 'inline-block',
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    backgroundColor: isOnline ? '#4CAF50' : '#F44336',
+    marginRight: '8px',
+    transition: 'background-color 0.3s ease'
+  });
+
   return (
     <div className="app">
       <header className="navbar">
         <h1>Air Quality Dashboard</h1>
         <nav className="nav-buttons">
-          <button
+          <button 
             className={`nav-button ${tab === "home" ? "active" : ""}`}
             onClick={() => setTab("home")}
           >
             <FaHome /> Home
           </button>
-          <button
+          <button 
             className={`nav-button ${tab === "historical" ? "active" : ""}`}
             onClick={() => setTab("historical")}
           >
             <FaChartLine /> Historical Data
+          </button>
+          <button 
+            className={`nav-button ${tab === "analytics" ? "active" : ""}`}
+            onClick={() => setTab("analytics")}
+          >
+            <FaChartBar /> Analytics
           </button>
         </nav>
       </header>
@@ -127,15 +137,24 @@ function App() {
           >
             <div className="card-container">
               {NODES.map((node) => (
-                <motion.div key={node} className="dashboard-card" whileHover={{ scale: 1.02 }}>
+                <motion.div
+                  key={node}
+                  className="dashboard-card"
+                  whileHover={{ scale: 1.02 }}
+                >
                   <div className="card-header">
                     <FaThermometerHalf size={24} />
                     <h3>{node.replace("_", " ")}</h3>
+                    <div 
+                      className="status-indicator" 
+                      style={statusStyle(deviceStatus[node])}
+                      title={deviceStatus[node] ? 'Online' : 'Offline'}
+                    />
                   </div>
-
+                  
                   {latestData[node]?.node ? (
                     <>
-                      <div
+                      <div 
                         className="quality-indicator"
                         style={{
                           background: getQualityColor(latestData[node].airQualityPercentage),
@@ -145,16 +164,13 @@ function App() {
                       <div className="data-row">
                         <FaThermometerHalf />
                         <span>
-                          Air Quality: {latestData[node].airQuality} (
-                          {latestData[node].airQualityPercentage}%)
+                          Air Quality: {latestData[node].airQuality} ({latestData[node].airQualityPercentage}%)
                         </span>
                       </div>
-
                       <div className="data-row">
                         <FaBatteryThreeQuarters />
                         <span>Battery: {latestData[node].batteryPercentage}%</span>
                       </div>
-
                       <div className="data-row">
                         <FaMapMarkerAlt />
                         <span>
@@ -162,7 +178,6 @@ function App() {
                           {latestData[node].location?.longitude}
                         </span>
                       </div>
-
                       <div className="data-row">
                         <FaClock />
                         <span>
@@ -183,34 +198,38 @@ function App() {
         )}
 
         {tab === "historical" && (
-          <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="historical-section">
+          <motion.section 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="historical-section"
+          >
             <div className="dashboard-card date-filter-card">
               <div className="card-header">
                 <FaCalendarAlt size={24} />
                 <h3>Select Date Range</h3>
               </div>
               <DateRangePicker
-                onChange={(item) => setDateRange([item.selection])}
+                onChange={item => setDateRange([item.selection])}
                 moveRangeOnFirstSelection={false}
                 ranges={dateRange}
                 className="date-picker"
               />
               <div className="time-view-buttons">
-                <button
-                  className={`view-button ${timeView === "daily" ? "active" : ""}`}
-                  onClick={() => setTimeView("daily")}
+                <button 
+                  className={`view-button ${timeView === 'daily' ? 'active' : ''}`}
+                  onClick={() => setTimeView('daily')}
                 >
                   <FaClock /> Daily
                 </button>
-                <button
-                  className={`view-button ${timeView === "monthly" ? "active" : ""}`}
-                  onClick={() => setTimeView("monthly")}
+                <button 
+                  className={`view-button ${timeView === 'monthly' ? 'active' : ''}`}
+                  onClick={() => setTimeView('monthly')}
                 >
                   <FaCalendarAlt /> Monthly
                 </button>
-                <button
-                  className={`view-button ${timeView === "breakdown" ? "active" : ""}`}
-                  onClick={() => setTimeView("breakdown")}
+                <button 
+                  className={`view-button ${timeView === 'breakdown' ? 'active' : ''}`}
+                  onClick={() => setTimeView('breakdown')}
                 >
                   <FaChartLine /> Day Breakdown
                 </button>
@@ -227,9 +246,22 @@ function App() {
               ) : error ? (
                 <div className="error-message">Error: {error}</div>
               ) : (
-                <TrendChart data={data} timeView={timeView} />
+                <TrendChart 
+                  data={getFilteredData()} 
+                  timeView={timeView}
+                />
               )}
             </div>
+          </motion.section>
+        )}
+
+        {tab === "analytics" && (
+          <motion.section
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="analytics-section"
+          >
+            <Analytics data={getFilteredData()} />
           </motion.section>
         )}
       </main>
@@ -239,6 +271,19 @@ function App() {
       </footer>
     </div>
   );
+}
+
+// You'll need to implement this function to return historical data for your date range
+async function fetchHistoricalData(startDate, endDate) {
+  // Example Supabase query (update table name and fields as needed)
+  // This is a placeholder. Replace with your own data fetching logic.
+  let { data, error } = await supabase
+    .from('air_quality_data')
+    .select('id,data,inserted_at,timestamp')
+    .gte('inserted_at', startDate.toISOString().slice(0, 10))
+    .lte('inserted_at', endDate.toISOString().slice(0, 10));
+  if (error) throw error;
+  return data;
 }
 
 export default App;
