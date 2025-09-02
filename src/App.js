@@ -8,7 +8,7 @@ import 'react-date-range/dist/theme/default.css';
 import "./App.css";
 import TrendChart from "./TrendChart";
 import { supabase } from "./supabaseClient";
-import Analytics from "./components/Analytics";
+import Analytics from "./components_Analytics";
 
 const NODES = ["Node_1", "Node_2"];
 
