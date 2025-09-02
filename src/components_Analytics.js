@@ -1,22 +1,44 @@
 import React, { useState } from 'react';
 import { FaChartBar, FaUpload, FaPencilAlt } from 'react-icons/fa';
+import './styles_Analytics.css';
 import { motion } from 'framer-motion';
 
-function Analytics({ data }) {
+function Analytics({ data = [] }) {
   const [analysisType, setAnalysisType] = useState('daily');
   const [inputMethod, setInputMethod] = useState('manual');
 
-  const calculateStats = (data) => {
-    const values = data.map(item => JSON.parse(item.data).airQualityPercentage);
+  const safeParse = (row) => {
+    try {
+      return typeof row.data === 'string' ? JSON.parse(row.data) : row.data || {};
+    } catch {
+      return {};
+    }
+  };
+
+  const calculateStats = (rows) => {
+    const values = rows
+      .map(r => {
+        const p = safeParse(r);
+        const v = Number(p.airQualityPercentage);
+        return Number.isFinite(v) ? v : null;
+      })
+      .filter(v => v !== null);
+
+    if (!values.length) return null;
+
+    const avg = (values.reduce((a,b)=>a+b,0) / values.length);
     return {
-      average: (values.reduce((a, b) => a + b, 0) / values.length).toFixed(1),
+      average: avg.toFixed(1),
       max: Math.max(...values),
       min: Math.min(...values),
       trend: values[values.length - 1] > values[0] ? 'improving' : 'declining'
     };
   };
 
+  const stats = calculateStats(data);
+
   const renderAnalysisResults = (stats) => {
+    if (!stats) return <p>No numeric data available to analyze.</p>;
     return (
       <div className="analysis-results">
         <h3>Analysis Results</h3>
@@ -51,7 +73,7 @@ function Analytics({ data }) {
         
         {inputMethod === 'manual' ? (
           <div className="manual-input-form">
-            {/* Manual input form components */}
+            <p style={{color:'#666'}}>Manual input coming soon — prefer uploading CSVs for now.</p>
           </div>
         ) : (
           <div className="file-upload">
@@ -84,7 +106,7 @@ function Analytics({ data }) {
           </button>
         </div>
         
-        {data && data.length > 0 && renderAnalysisResults(calculateStats(data))}
+        {renderAnalysisResults(stats)}
       </div>
     </div>
   );

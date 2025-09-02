@@ -7,7 +7,7 @@ import 'react-date-range/dist/styles.css';
 import 'react-date-range/dist/theme/default.css';
 import "./App.css";
 import TrendChart from "./TrendChart";
-import { supabase } from "./supabaseClient";
+import { supabase, fetchHistoricalData } from "./supabaseClient";
 import Analytics from "./components_Analytics";
 
 const NODES = ["Node_1", "Node_2"];
@@ -271,19 +271,6 @@ function App() {
       </footer>
     </div>
   );
-}
-
-// You'll need to implement this function to return historical data for your date range
-async function fetchHistoricalData(startDate, endDate) {
-  // Example Supabase query (update table name and fields as needed)
-  // This is a placeholder. Replace with your own data fetching logic.
-  let { data, error } = await supabase
-    .from('air_quality_data')
-    .select('id,data,inserted_at,timestamp')
-    .gte('inserted_at', startDate.toISOString().slice(0, 10))
-    .lte('inserted_at', endDate.toISOString().slice(0, 10));
-  if (error) throw error;
-  return data;
 }
 
 export default App;
